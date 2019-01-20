@@ -52,15 +52,30 @@ impl FieldElement {
         }
 
         if let Some(result) = self.value.pow_mod_ref(exponent, &self.field.prime) {
-            FieldElement::new(Integer::from(result), &self.field.clone())
+            FieldElement::new(Integer::from(result), &self.field)
         } else {
             unreachable!()
         }
     }
 
+    pub fn is_even(&self) -> bool {
+        self.value.is_even()
+    }
+
+    pub fn is_odd(&self) -> bool {
+        self.value.is_odd()
+    }
+
     /// Indicates whether or not this field element is zero
     pub fn is_zero(&self) -> bool {
         self.value == 0
+    }
+
+    /// Calculates the square root of this field element (only works in
+    /// secp256k1 field)
+    pub fn sqrt(&self) -> Integer {
+        let (power, _) = (self.field.prime.clone() + Integer::from(1)).div_rem_euc(Integer::from(4));
+        self.pow(&power).value
     }
 }
 

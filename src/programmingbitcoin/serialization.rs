@@ -1,7 +1,11 @@
 //! Contains traits for serializing values
+use std::rc::Rc;
+use rug::Integer;
+use rug::ops::*;
 use rug::integer::Order;
 
-use programmingbitcoin::ellipticcurve::Point;
+use programmingbitcoin::ellipticcurve::*;
+use programmingbitcoin::ecdsa::*;
 
 pub trait PublicKeySerialization {
     /// Converts a public key value into SEC format.
@@ -10,7 +14,13 @@ pub trait PublicKeySerialization {
     fn as_compressed_sec(&self) -> Vec<u8>;
 }
 
+pub trait PublicKeyDeserialization {
+    /// Convert an SEC serialized compressed or uncompressed address to a PublicKey
+    fn from_sec(data: &Vec<u8>, curve: &Rc<CryptographicCurve>) -> Point;
+}
+
 impl PublicKeySerialization for Point {
+    // SEC encode and given point
     fn as_sec(&self) -> Vec<u8> {
         let mut result : Vec<u8> = Vec::new();
         let x_val = self.x.clone().unwrap().value;
@@ -22,6 +32,7 @@ impl PublicKeySerialization for Point {
         result
     }
 
+    // Compressed SEC encode a given point
     fn as_compressed_sec(&self) -> Vec<u8> {
         let mut result : Vec<u8> = Vec::new();
         let x_val = self.x.clone().unwrap().value;
@@ -35,6 +46,42 @@ impl PublicKeySerialization for Point {
         result.push(prefix_byte);
         result.append(&mut x_val.to_digits::<u8>(Order::MsfBe));
         result
+    }
+}
+
+impl Point {
+    /// Load SEC formatted public key
+    fn from_sec(data: &Vec<u8>, curve: &Rc<CryptographicCurve>) -> Point {
+        // Uncompressed
+        if data[0] == 0x4 {
+            let x = Integer::from_digits::<u8>(&data[1..33], Order::MsfBe);
+            let y = Integer::from_digits::<u8>(&data[33..65], Order::MsfBe);
+            return curve.make_point_integral(x, y).unwrap();
+        }
+
+        // Compressed
+        let is_even = data[0] == 0x2;
+        let x = curve.finite_curve.make_element(
+            Integer::from_digits::<u8>(&data[1..], Order::MsfBe)
+        );
+        let alpha = curve.finite_curve.make_element(
+            x.clone().value.pow(3) + &curve.finite_curve.curve.b
+        );
+        let beta = alpha.sqrt();
+
+        let mut even_beta = curve.finite_curve.make_element(beta.clone());
+        let mut odd_beta = curve.finite_curve.make_element(beta.clone());
+        if beta.is_even() {
+            odd_beta = curve.finite_curve.make_element(Integer::from(&curve.finite_curve.field.prime - beta));
+        } else {
+            even_beta = curve.finite_curve.make_element(Integer::from(&curve.finite_curve.field.prime - beta.clone()));
+        }
+
+        if is_even {
+            Point::new(Some(x), Some(even_beta), &curve.finite_curve)
+        } else {
+            Point::new(Some(x), Some(odd_beta), &curve.finite_curve)
+        }
     }
 }
 
@@ -70,8 +117,14 @@ fn test_sec_serialization() {
         assert_eq!(result.len(), 65);
         assert_eq!(result, &uncompressed[..]);
 
+        let decoded = Point::from_sec(&result, &curve);
+        assert_eq!(decoded, private_key.public_key);
+
         let result = private_key.public_key.as_compressed_sec();
         assert_eq!(result.len(), 33);
         assert_eq!(result, &compressed[..]);
+
+        let decoded = Point::from_sec(&result, &curve);
+        assert_eq!(decoded, private_key.public_key);
     }
 }
