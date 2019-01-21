@@ -14,9 +14,9 @@ pub trait PublicKeySerialization {
     fn as_compressed_sec(&self) -> Vec<u8>;
 }
 
-pub trait PublicKeyDeserialization {
-    /// Convert an SEC serialized compressed or uncompressed address to a PublicKey
-    fn from_sec(data: &Vec<u8>, curve: &Rc<CryptographicCurve>) -> Point;
+pub trait SignatureSerialization {
+    /// Convert a signature to DER encoding
+    fn as_der(&self) -> Vec<u8>;
 }
 
 impl PublicKeySerialization for Point {
@@ -85,11 +85,46 @@ impl Point {
     }
 }
 
+impl SignatureSerialization for Signature {
+    fn as_der(&self) -> Vec<u8> {
+        // No need to strip off leading zeros because that is done for us
+        let r_bin = self.r.value.to_digits::<u8>(Order::MsfBe);
+
+        let r_bin = 
+            if r_bin[0] & 0x80 > 0 {
+                let mut value : Vec<u8> = vec![0x00];
+                value.extend(r_bin);
+                value
+            } else {
+                r_bin
+            };
+
+        let mut result : Vec<u8> = vec![0x02, r_bin.len() as u8];
+        result.extend(r_bin);
+
+        let s_bin = self.s.value.to_digits::<u8>(Order::MsfBe);
+        let s_bin =
+            if s_bin[0] & 0x80 > 0 {
+                let mut value : Vec<u8> = vec![0x00];
+                value.extend(s_bin);
+                value
+            } else {
+                s_bin
+            };
+
+        result.extend(vec![0x02, s_bin.len() as u8]);
+        result.extend(s_bin);
+
+        let mut final_result : Vec<u8> = vec![0x30, result.len() as u8];
+        final_result.extend(result);
+        final_result
+    }
+}
+
 #[test]
 fn test_sec_serialization() {
     use rug::Integer;
     use std::rc::Rc;
-    use programmingbitcoin::ecdsa::*;
     use rug::ops::*;
 
     let curve = Rc::new(CryptographicCurve::new_secp256k1());
@@ -126,5 +161,25 @@ fn test_sec_serialization() {
 
         let decoded = Point::from_sec(&result, &curve);
         assert_eq!(decoded, private_key.public_key);
+    }
+}
+
+#[test]
+fn test_der_serialization() {
+    use rug::Integer;
+    use std::rc::Rc;
+
+    let curve = Rc::new(CryptographicCurve::new_secp256k1());
+    let values = vec![
+        (
+            Integer::from_str_radix("37206a0610995c58074999cb9767b87af4c4978db68c06e8e6e81d282047a7c6", 16).unwrap(),
+            Integer::from_str_radix("8ca63759c1157ebeaec0d03cecca119fc9a75bf8e6d0fa65c841c8e2738cdaec", 16).unwrap(),
+            b"0E\x02 7 j\x06\x10\x99\\X\x07I\x99\xcb\x97g\xb8z\xf4\xc4\x97\x8d\xb6\x8c\x06\xe8\xe6\xe8\x1d( G\xa7\xc6\x02!\x00\x8c\xa67Y\xc1\x15~\xbe\xae\xc0\xd0<\xec\xca\x11\x9f\xc9\xa7[\xf8\xe6\xd0\xfae\xc8A\xc8\xe2s\x8c\xda\xec"
+        )
+    ];
+
+    for (r, s, sig_bytes) in values {
+        let sig = Signature::new(curve.make_element(r), curve.make_element(s), &curve);
+        assert_eq!(sig.as_der(), &sig_bytes[..]);
     }
 }
